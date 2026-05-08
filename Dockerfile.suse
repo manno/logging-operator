@@ -1,0 +1,13 @@
+# Goreleaser-compatible SUSE-based image
+# Binary is built externally and copied in
+FROM registry.suse.com/bci/bci-micro:latest
+
+LABEL org.opencontainers.image.source="https://github.com/manno/logging-operator"
+LABEL org.opencontainers.image.vendor="SUSE Rancher"
+
+# Copy pre-built binary (from goreleaser build or local build)
+COPY logging-operator /usr/local/bin/logging-operator
+
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/logging-operator"]

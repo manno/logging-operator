@@ -1,0 +1,68 @@
+name: Auto-Update SUSE BCI
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # Daily at 12:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rancher-main
+
+      - name: Get BCI digest
+        id: bci
+        run: |
+          # Get latest digest
+          LATEST=$(docker buildx imagetools inspect \
+                   registry.suse.com/bci/bci-micro:latest \
+                   --format '{{json .}}' | \
+                   jq -r '.manifest.digest')
+
+          # Get current digest (if pinned)
+          if grep -q "FROM.*bci-micro.*@sha256:" Dockerfile.suse; then
+            CURRENT=$(grep "FROM.*bci-micro.*@sha256:" Dockerfile.suse | \
+                     cut -d@ -f2 | cut -d' ' -f1)
+          else
+            CURRENT="unpinned"
+          fi
+
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+
+          if [ "$CURRENT" != "$LATEST" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Dockerfile
+        if: steps.bci.outputs.needs_update == 'true'
+        run: |
+          # Pin to new digest
+          sed -i "s|FROM registry.suse.com/bci/bci-micro:latest|FROM registry.suse.com/bci/bci-micro@${{ steps.bci.outputs.latest }}|" \
+            Dockerfile.suse
+
+      - name: Create PR
+        if: steps.bci.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update SUSE BCI base image"
+          branch: auto-update-suse-bci
+          delete-branch: true
+          title: 'chore: update SUSE BCI base image'
+          body: |
+            Automated SUSE BCI Micro base image update.
+
+            New digest: ${{ steps.bci.outputs.latest }}
+
+            This triggers a rebuild with the latest SUSE base image.
+          labels: dependencies,automated,suse-bci-update

@@ -1,0 +1,81 @@
+name: Build SUSE Image
+
+on:
+  push:
+    branches: [rancher-main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  GO_VERSION: '1.26'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+
+      - name: Build with goreleaser (snapshot)
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/rancher-main'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          goreleaser build --snapshot --clean
+
+          # Build Docker images for both architectures
+          for arch in amd64 arm64; do
+            if [ "$arch" = "amd64" ]; then
+              binary_path="dist/logging-operator_linux_amd64_v1/logging-operator"
+            else
+              binary_path="dist/logging-operator_linux_arm64/logging-operator"
+            fi
+
+            if [ -f "$binary_path" ]; then
+              cp "$binary_path" ./logging-operator
+              docker buildx build \
+                --platform linux/$arch \
+                -f Dockerfile.suse \
+                -t ${{ env.REGISTRY }}/${{ github.repository }}:dev-$(git rev-parse --short HEAD)-$arch \
+                ${{ github.event_name != 'pull_request' && '--push' || '--load' }} \
+                .
+              rm -f logging-operator
+            fi
+          done
+
+      - name: Build release with goreleaser
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          goreleaser release --clean

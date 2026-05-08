@@ -1,0 +1,65 @@
+name: Auto-Update Go
+
+on:
+  schedule:
+    - cron: '0 10 * * *'  # Daily at 10:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rancher-main
+
+      - name: Check Go version
+        id: check
+        run: |
+          LATEST=$(curl -s 'https://go.dev/dl/?mode=json' | \
+                   jq -r '[.[] | select(.stable == true)] | .[0].version' | \
+                   sed 's/go//')
+          CURRENT=$(grep "GO_VERSION:" .github/workflows/build.yaml | \
+                    head -1 | cut -d"'" -f2)
+
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update files
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          LATEST="${{ steps.check.outputs.latest }}"
+
+          sed -i "s/GO_VERSION: '[0-9.]*'/GO_VERSION: '$LATEST'/" \
+            .github/workflows/build.yaml
+
+          sed -i "s/ARG GO_VERSION=[0-9.]*/ARG GO_VERSION=$LATEST/" \
+            Dockerfile.suse
+
+      - name: Create PR
+        if: steps.check.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update Go to ${{ steps.check.outputs.latest }}"
+          branch: auto-update-go-${{ steps.check.outputs.latest }}
+          delete-branch: true
+          title: 'chore: update Go to ${{ steps.check.outputs.latest }}'
+          body: |
+            Automated Go version update.
+
+            - Previous: ${{ steps.check.outputs.current }}
+            - New: ${{ steps.check.outputs.latest }}
+
+            This triggers a rebuild with the latest Go compiler.
+          labels: dependencies,automated,go-update

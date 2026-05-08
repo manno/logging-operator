@@ -1,0 +1,89 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard",
+  ],
+
+  // Target our rancher-main branch
+  baseBranches: ["rancher-main"],
+
+  // Limit concurrent PRs to avoid noise
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+
+  // Schedule updates outside business hours (UTC)
+  schedule: ["before 6am every weekday", "every weekend"],
+
+  // Enable security alerts (immediate, ignores schedule)
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["security", "vulnerability"],
+    automerge: true,
+    automergeType: "branch",
+    schedule: ["at any time"],
+  },
+
+  // Auto-merge configuration
+  packageRules: [
+    // Auto-merge Go module patch updates (e.g., v1.2.3 -> v1.2.4)
+    {
+      matchManagers: ["gomod"],
+      matchUpdateTypes: ["patch"],
+      automerge: true,
+      automergeType: "branch",
+      labels: ["dependencies", "go", "patch"],
+    },
+
+    // Group minor Go module updates into one weekly PR (require review)
+    {
+      matchManagers: ["gomod"],
+      matchUpdateTypes: ["minor"],
+      automerge: false,
+      groupName: "go-minor-updates",
+      schedule: ["before 6am on monday"],
+      labels: ["dependencies", "go", "minor"],
+    },
+
+    // Never auto-merge major Go updates (could be breaking)
+    {
+      matchManagers: ["gomod"],
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "go", "major"],
+    },
+
+    // SUSE BCI base image updates handled by auto-update-bci.yaml workflow
+    // Disable Renovate to avoid conflicts
+    {
+      matchPackageNames: ["registry.suse.com/bci/bci-micro"],
+      enabled: false,
+    },
+
+    // GitHub Actions updates - auto-merge patches and minors
+    {
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["patch", "minor"],
+      automerge: true,
+      automergeType: "branch",
+      labels: ["ci", "github-actions"],
+    },
+  ],
+
+  // Go module specific config
+  postUpdateOptions: [
+    "gomodTidy",
+    "gomodUpdateImportPaths",
+  ],
+
+  // Commit message format
+  commitMessagePrefix: "chore(deps):",
+  commitMessageAction: "update",
+
+  // PR labels
+  labels: ["dependencies", "automated"],
+
+  // Always rebase outdated branches
+  rebaseWhen: "behind-base-branch",
+}
