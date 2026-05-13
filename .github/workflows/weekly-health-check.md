@@ -17,10 +17,6 @@ permissions:
 
 network: defaults
 
-safe-outputs:
-  create-issue:
-    max: 1
-
 tools:
   bash: ["git:*", "gh:*", "sed", "grep", "cat", "echo", "date", "go:*", "curl", "jq", "docker:*"]
   github:
@@ -158,14 +154,19 @@ to actually-called code paths). For each: ID, affected module, fixed version
 if any. **If any vulnerability has a fixed version available, that is High
 Priority** — Renovate's vuln auto-merge should have caught it.
 
-## Step 5 — Generate the report
+## Step 5 — Emit the report
 
-Create one issue with:
+Issues are disabled on this fork — the report has no issue to land in. Instead,
+**emit the full markdown report as your final response.** gh-aw renders the
+agent's final output to the workflow run's step summary, so the report appears
+on the run page and in any subscribed notification.
 
-**Title:** `[Health Report] Week of <YYYY-MM-DD>`
+Use exactly this structure (substitute the bracketed placeholders with real
+data from steps 1–4):
 
-**Body:**
 ```markdown
+# [Health Report] Week of <YYYY-MM-DD>
+
 ## Weekly Health Report — Logging Operator (SUSE Rebuild)
 
 **Repository**: `${{ github.repository }}`
@@ -253,9 +254,5 @@ Generate strictly from the data above. If a section has nothing, write
 <!-- gh-aw-workflow-id: weekly-health-check -->
 ```
 
-**Labels**: `automated`
-
-After creating the issue, write to the workflow summary:
-```
-Health report: <issue-url>
-```
+That markdown block IS your final response — emit it verbatim with placeholders
+filled in. No further actions, no issue creation, no comments.
