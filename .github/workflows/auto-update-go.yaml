@@ -26,8 +26,7 @@ jobs:
           LATEST=$(curl -fsSL 'https://go.dev/dl/?mode=json' | \
                    jq -r '[.[] | select(.stable == true)] | .[0].version' | \
                    sed 's/go//')
-          CURRENT=$(grep "GO_VERSION:" .github/workflows/build.yaml | \
-                    head -1 | cut -d"'" -f2)
+          CURRENT=$(cat .go-version)
 
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
@@ -38,14 +37,11 @@ jobs:
             echo "needs_update=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update files
+      - name: Update .go-version
         if: steps.check.outputs.needs_update == 'true'
         run: |
           set -euo pipefail
-          LATEST="${{ steps.check.outputs.latest }}"
-
-          sed -i "s/GO_VERSION: '[0-9.]*'/GO_VERSION: '$LATEST'/" \
-            .github/workflows/build.yaml
+          echo "${{ steps.check.outputs.latest }}" > .go-version
 
       - name: Create or update PR
         if: steps.check.outputs.needs_update == 'true'
@@ -64,7 +60,7 @@ jobs:
 
           git checkout -B "${BRANCH}"
 
-          git add .github/workflows/build.yaml
+          git add .go-version
           if git diff --cached --quiet; then
             echo "Nothing to commit"
             exit 0
