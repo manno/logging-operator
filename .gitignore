@@ -1,3 +1,8 @@
+# Environment variables for dev
+.envrc
+.env
+.env.local
+
 # Goreleaser
 dist/
 *.tar.gz

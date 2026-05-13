@@ -37,11 +37,22 @@ jobs:
             echo "needs_update=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update .go-version
+      - name: Update .go-version and go.mod toolchain
         if: steps.check.outputs.needs_update == 'true'
         run: |
           set -euo pipefail
-          echo "${{ steps.check.outputs.latest }}" > .go-version
+          LATEST="${{ steps.check.outputs.latest }}"
+
+          # CI reads this file via actions/setup-go
+          echo "${LATEST}" > .go-version
+
+          # Local devs with Go 1.21+ auto-download via toolchain directive
+          if grep -q "^toolchain " go.mod; then
+            sed -i "s/^toolchain go.*/toolchain go${LATEST}/" go.mod
+          else
+            # Insert toolchain directive after the go directive
+            sed -i "/^go [0-9]/a toolchain go${LATEST}" go.mod
+          fi
 
       - name: Create or update PR
         if: steps.check.outputs.needs_update == 'true'
@@ -60,7 +71,7 @@ jobs:
 
           git checkout -B "${BRANCH}"
 
-          git add .go-version
+          git add .go-version go.mod
           if git diff --cached --quiet; then
             echo "Nothing to commit"
             exit 0
@@ -76,6 +87,10 @@ jobs:
           - **New**: \`${LATEST}\`
 
           Rebuilding with the new Go compiler picks up Go stdlib security fixes.
+
+          ### Files Updated
+          - \`.go-version\` — used by \`actions/setup-go\` in CI
+          - \`go.mod\` — \`toolchain\` directive, auto-downloaded by local devs
 
           ### Release Notes
           https://go.dev/doc/devel/release#go${LATEST}

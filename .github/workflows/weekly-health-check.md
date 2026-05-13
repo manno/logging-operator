@@ -4,22 +4,25 @@ description: |
   Monitors builds, dependencies, open issues, and stale PRs.
 
 on:
-  schedule:
-    - cron: '57 6 * * 1'  # Every Monday at 6:57 AM UTC
+  schedule: weekly on monday
   workflow_dispatch:
 
-permissions: read-all
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: read
 
 network: defaults
 
 safe-outputs:
   create-issue:
-    max-operations: 1
+    max: 1
 
 tools:
-  bash: true
+  bash: ["git:*", "gh:*", "sed", "grep", "cat", "echo", "go:*", "curl", "jq"]
   github:
-    toolsets: [issues, actions, pull-requests]
+    toolsets: [issues, actions, pull_requests]
 
 timeout-minutes: 20
 ---
@@ -78,7 +81,7 @@ Check if our build dependencies need updates:
 **Go version freshness:**
 ```bash
 # Current version
-CURRENT=$(grep "GO_VERSION:" .github/workflows/build.yaml | head -1 | cut -d"'" -f2)
+CURRENT=$(cat .go-version)
 
 # Latest stable
 LATEST=$(curl -s 'https://go.dev/dl/?mode=json' | jq -r '[.[] | select(.stable == true)] | .[0].version' | sed 's/go//')
@@ -101,7 +104,7 @@ LATEST=$(curl -s 'https://go.dev/dl/?mode=json' | jq -r '[.[] | select(.stable =
 
 **Check current Go version:**
 ```bash
-grep "GO_VERSION:" .github/workflows/build.yaml | head -1 | cut -d"'" -f2
+cat .go-version
 ```
 
 **Check latest stable Go:**
