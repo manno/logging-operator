@@ -1,7 +1,10 @@
 ---
 description: |
-  Weekly health check report for logging-operator repository.
-  Monitors builds, dependencies, open issues, and stale PRs.
+  Weekly health check for the logging-operator SUSE rebuild pipeline.
+  Monitors build status, auto-update bot liveness, open security/dependency PRs,
+  and dependency drift. This is the meta-monitor for the CVE response pipeline —
+  its job is to flag when the automation itself stalls, not to track feature
+  work (we maintain frozen 4.10.0 application code).
 
 on:
   schedule: weekly on monday
@@ -9,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  issues: read
   pull-requests: read
   actions: read
 
@@ -20,208 +22,240 @@ safe-outputs:
     max: 1
 
 tools:
-  bash: ["git:*", "gh:*", "sed", "grep", "cat", "echo", "go:*", "curl", "jq"]
+  bash: ["git:*", "gh:*", "sed", "grep", "cat", "echo", "date", "go:*", "curl", "jq", "docker:*"]
   github:
-    toolsets: [issues, actions, pull_requests]
+    toolsets: [actions, pull_requests]
 
 timeout-minutes: 20
 ---
 
-# Weekly Health Check - Logging Operator
+# Weekly Health Check — Logging Operator (SUSE Rebuild)
 
-Generate weekly health report for `${{ github.repository }}`.
+Generate the weekly health report for `${{ github.repository }}`.
 
-Today is Monday, and this is the automated weekly health check.
+This fork rebuilds upstream logging-operator with a fresh Go compiler, SUSE BCI
+base image, and Go modules to address CVEs. Application code is **frozen at
+4.10.0** — we do NOT cherry-pick. The release pipeline is fully automated:
 
-## Step 1 – Check build status
+- `auto-update-go.yaml` — daily; opens a PR when a new stable Go ships
+- `auto-update-bci.yaml` — daily; opens a PR when the SUSE BCI digest changes
+- `renovate.json5` — Go module updates (auto-merge on vuln + patch)
+- `cve-response.md` — agentic CVE fix, triggered by image-scanning team
 
-Query the last 10 workflow runs on the rancher-main branch:
+**This report's job is to catch when that automation stalls.** Skip anything
+that doesn't speak to "is the rebuild pipeline producing fixed images?"
+
+---
+
+## Step 1 — Build status on rancher-main
+
+Run:
 ```bash
-gh run list --repo ${{ github.repository }} --branch rancher-main --limit 10 \
-  --json conclusion,status,name,createdAt
+gh run list --repo ${{ github.repository }} --branch rancher-main --limit 30 \
+  --json conclusion,status,name,workflowName,createdAt,event,headSha,url
 ```
 
-Collect and analyze:
-- Number of successful builds
-- Number of failed builds
-- Most recent failure (if any) with reason
-- Build trend (improving/stable/declining)
+For each distinct `workflowName`, find the most recent run on `rancher-main`
+and record: conclusion, age in hours, run URL. A failing run on `rancher-main`
+blocks CVE-fix PRs from merging cleanly — these are top-priority signals.
 
-## Step 2 – Check open issues
+Workflows to expect: `build`, `ci`, `e2e`, `codeql`, `release`, `artifacts`,
+`auto-update-go`, `auto-update-bci`, `weekly-health-check`. If a workflow you
+expect is missing from the list entirely, treat that as a finding (it has
+never run on `rancher-main`, or has been disabled).
 
-Count open issues by label:
-- `bug`
-- `enhancement`
-- `security`
-- `question`
-- `automated`
+## Step 2 — Auto-update bot liveness
 
-Identify:
-- Issues with no activity in 30+ days (stale)
-- Issues without any labels (needs triage)
-- Issues assigned but not updated in 14+ days
+These two bots ARE the rebuild pipeline. If they stop running, CVE rebuilds
+stop happening — this is the most important section.
 
-## Step 3 – Check open PRs
-
-List all open PRs and categorize:
-- **Active**: Updated within 7 days
-- **Stale**: No updates for 7-30 days
-- **Very Stale**: No updates for 30+ days
-
-Check for:
-- PRs awaiting review
-- PRs with failed CI checks
-- PRs with merge conflicts
-- Automated PRs (dependency updates, CVE fixes)
-
-## Step 4 – Check dependency freshness
-
-Check if our build dependencies need updates:
-
-**Go version freshness:**
+For each of `auto-update-go.yaml` and `auto-update-bci.yaml`:
 ```bash
-# Current version
-CURRENT=$(cat .go-version)
-
-# Latest stable
-LATEST=$(curl -s 'https://go.dev/dl/?mode=json' | jq -r '[.[] | select(.stable == true)] | .[0].version' | sed 's/go//')
-
-# Compare and note if update available
+gh run list --repo ${{ github.repository }} --workflow <file> --limit 5 \
+  --json conclusion,createdAt,event,url
 ```
 
-**SUSE BCI base image freshness:**
-- Check if Dockerfile.suse is pinned to a digest
-- Check when the current digest was last updated
-- Note if a newer digest is available
+Record per bot:
+- Age of the most recent successful run (expected: < 36 h, since they run daily)
+- Conclusion of the last 5 runs (success rate)
+- Whether there's an open PR from that bot. Detect by branch prefix:
+  ```bash
+  # auto-update-go: branches like auto-update-go-1.26.4
+  gh pr list --repo ${{ github.repository }} --state open --search "head:auto-update-go-" \
+    --json number,title,createdAt,url
+  # auto-update-bci: single branch
+  gh pr list --repo ${{ github.repository }} --state open --head "auto-update-suse-bci" \
+    --json number,title,createdAt,url
+  ```
 
-**Go module security:**
-- Check if any Go modules have known CVEs: https://pkg.go.dev/vuln/
-- List any modules flagged for security updates
+**Escalation rules** (must appear in High Priority action items):
+- Last successful run > 36 h ago → bot stalled
+- Most recent run failed → investigate before next scheduled run
+- Open PR from bot is older than 7 days with green checks → why hasn't it merged?
 
-**Note:** We maintain frozen application code (4.10.0). Security comes from rebuilding with fresh dependencies, not upstream code changes.
+## Step 3 — Open PR analysis
 
-## Step 5 – Check Go and base image versions
-
-**Check current Go version:**
 ```bash
-cat .go-version
+gh pr list --repo ${{ github.repository }} --state open --limit 50 \
+  --json number,title,labels,createdAt,updatedAt,author,isDraft,url,headRefName,statusCheckRollup
 ```
 
-**Check latest stable Go:**
-Visit https://go.dev/dl/?mode=json and get the latest stable version.
+Group by the labels the bots emit. Each PR is counted in **at most one**
+group; precedence top-to-bottom:
 
-Compare to determine if an update is available.
+| Group | Label(s) | Source | Why we care |
+|---|---|---|---|
+| CVE fixes | `cve-fix` | `cve-response.md` | Active CVE remediation |
+| Security | `security`, `vulnerability` | Renovate vuln alerts | Should auto-merge |
+| Go compiler | `go-update` | `auto-update-go.yaml` | Stdlib CVE rebuild |
+| SUSE BCI | `suse-bci-update` | `auto-update-bci.yaml` | OS-level CVE rebuild |
+| Other deps | `dependencies` | Renovate | Module updates |
+| Untagged | (none of above) | Manual | Probably needs triage |
 
-**Check SUSE BCI base image:**
-Note the current base image from `Dockerfile.suse`.
+For each group: count, oldest PR age in days, count with failing checks.
 
-## Step 6 – Generate health report
+**Escalation rules:**
+- Any `cve-fix` PR open > 3 days → review escalation
+- Any `security`/`vulnerability` PR present (Renovate is configured to
+  auto-merge these) → auto-merge failed; investigate why
+- Any group with failing checks → list the PRs
 
-Create an issue titled: `[Health Report] Week of <current-date>`
+## Step 4 — Dependency drift (cross-check against bots)
 
-**Body format:**
+The point of this section is not just "is X out of date" — the auto-update
+bots already check that daily. The point is: **if drift exists AND no open
+auto-update PR exists, the bot failed silently.**
+
+**Go compiler:**
+```bash
+CURRENT_GO=$(cat .go-version)
+LATEST_GO=$(curl -fsSL 'https://go.dev/dl/?mode=json' \
+  | jq -r '[.[] | select(.stable == true)] | .[0].version' | sed 's/go//')
+echo "go current=$CURRENT_GO latest=$LATEST_GO"
+```
+If `CURRENT_GO != LATEST_GO` and Step 2 found no open `auto-update-go` PR,
+flag as **High Priority** (bot is silently broken — drift it should have
+caught is sitting open).
+
+**SUSE BCI base image:**
+```bash
+CURRENT_BCI=$(grep -E '^FROM .*bci-micro' Dockerfile.suse | sed -n 's/.*@\(sha256:[a-f0-9]*\).*/\1/p')
+LATEST_BCI=$(docker buildx imagetools inspect registry.suse.com/bci/bci-micro:latest \
+  --format '{{json .}}' 2>/dev/null | jq -r '.manifest.digest' || echo unknown)
+BCI_AGE=$(git log -1 --format=%cr -- Dockerfile.suse)
+echo "bci current=$CURRENT_BCI latest=$LATEST_BCI last_bumped=$BCI_AGE"
+```
+Same logic: drift + no open `auto-update-suse-bci` PR → bot stalled. Also
+report the last-bumped relative time so reviewers can sanity-check.
+
+**Go module vulnerabilities:**
+```bash
+go install golang.org/x/vuln/cmd/govulncheck@latest
+"$(go env GOPATH)/bin/govulncheck" -mode=source -show=verbose ./... 2>&1 | tail -200 || true
+```
+Report the count of vulnerabilities affecting our build (govulncheck filters
+to actually-called code paths). For each: ID, affected module, fixed version
+if any. **If any vulnerability has a fixed version available, that is High
+Priority** — Renovate's vuln auto-merge should have caught it.
+
+## Step 5 — Generate the report
+
+Create one issue with:
+
+**Title:** `[Health Report] Week of <YYYY-MM-DD>`
+
+**Body:**
 ```markdown
-## 📊 Weekly Health Report - Logging Operator
+## Weekly Health Report — Logging Operator (SUSE Rebuild)
 
-**Repository**: `${{ github.repository }}`  
-**Report Date**: <current-date>  
-**Period**: Last 7 days  
-**Branch**: rancher-main  
-
----
-
-## 🏗️ Build Health
-
-| Metric | Value | Status |
-|--------|-------|--------|
-| Recent builds (10) | X successful, Y failed | ✅/⚠️/❌ |
-| Build success rate | X% | ✅/⚠️/❌ |
-| Last failure | <date and reason or "None"> | ✅/⚠️/❌ |
-
-<if any failures>
-### Recent Failed Builds
-- **<workflow-name>** failed on <date>: <reason>
-</if>
+**Repository**: `${{ github.repository }}`
+**Report date**: <YYYY-MM-DD>
+**Branch**: `rancher-main`
+**Pipeline status**: <one-line: 🟢 healthy / 🟡 drift / 🔴 broken>
 
 ---
 
-## 📋 Issue Health
+### Build health (most recent run per workflow on `rancher-main`)
 
-| Category | Open Count | Status |
-|----------|-----------|--------|
-| Bugs | X | ✅/⚠️/❌ |
-| Enhancements | X | → |
-| Security | X | ✅/⚠️/❌ |
-| Questions | X | → |
+| Workflow | Conclusion | Age | Run |
+|---|---|---|---|
+| build | ✅/❌ | Xh | <url> |
+| ci | ✅/❌ | Xh | <url> |
+| e2e | ✅/❌ | Xh | <url> |
+| codeql | ✅/❌ | Xh | <url> |
+| release | ✅/❌ | Xh | <url> |
+| artifacts | ✅/❌ | Xh | <url> |
 
-### Issues Needing Attention
-<if any exist>
-- **Stale issues** (30+ days): X issues
-- **Unlabeled issues**: X issues
-- **Assigned but stale** (14+ days): X issues
-</if>
+<If any failed, list one bullet per failure with run URL.>
 
 ---
 
-## 🔄 Pull Request Health
+### Auto-update bot liveness
 
-| Status | Count | Action Needed |
-|--------|-------|---------------|
-| Active (< 7 days) | X | Review |
-| Stale (7-30 days) | X | Ping authors |
-| Very Stale (30+ days) | X | Close or escalate |
+| Bot | Last success | Last 5 runs | Open PR |
+|---|---|---|---|
+| auto-update-go | Xh ago | ✅✅✅✅✅ | #N or none |
+| auto-update-bci | Xh ago | ✅✅✅✅✅ | #N or none |
 
-<if stale PRs exist>
-### PRs Requiring Attention
-<list PR titles with links>
-</if>
+<If a bot stalled (no success in >36h, OR last run failed):>
+> 🚨 **<bot> stalled** — last successful run Xh ago. The rebuild pipeline
+> is not running. See <run-url>.
 
 ---
 
-## 🐹 Dependency Status
+### Open PRs
 
-**Go Version**:
-- Current: `<current-version>`
-- Latest stable: `<latest-version>`
-- Status: ✅ Up to date / ⚠️ Update available
+| Group | Count | Oldest | Failing checks |
+|---|---|---|---|
+| cve-fix | X | Nd | Y |
+| security / vulnerability | X | Nd | Y |
+| go-update | X | Nd | Y |
+| suse-bci-update | X | Nd | Y |
+| dependencies (other) | X | Nd | Y |
+| untagged | X | Nd | Y |
 
-**SUSE BCI Base Image**:
-- Current: `<current-image>`
-- Status: <check if updates available>
-
----
-
-## 🎯 Action Items
-
-<Generate prioritized list based on findings>
-
-### High Priority
-<if any critical issues>
-1. <action item>
-</if>
-
-### Medium Priority
-<if any medium issues>
-1. <action item>
-</if>
-
-### Low Priority
-<if any low priority items>
-1. <action item>
-</if>
+<List any escalations: stale cve-fix PRs, security PRs that didn't auto-merge,
+auto-update PRs with failing checks. Skip the section if there are none.>
 
 ---
 
-📅 **Next Report**: <next-monday-date>
+### Dependency drift
 
+| Component | Current | Latest | Status |
+|---|---|---|---|
+| Go compiler | <ver> | <ver> | ✅ in sync / ⚠️ drift / 🚨 drift + bot silent |
+| SUSE BCI digest | `<short>` | `<short>` | ✅ / ⚠️ / 🚨 (last bumped <relative-time>) |
+| Go module vulns | N found | — | ✅ clean / ⚠️ N with no fix / 🚨 N with fix available |
+
+<If govulncheck found any vulns, list them: ID, module, current vs fixed.>
+
+---
+
+### 🎯 Action items
+
+Generate strictly from the data above. If a section has nothing, write
+"None." rather than padding.
+
+**High priority** (rebuild pipeline broken or unfixed CVE with known fix):
+- ...
+
+**Medium priority** (drift accumulating but not actively breaking):
+- ...
+
+**Low priority** (nuisance / housekeeping):
+- ...
+
+---
+
+📅 **Next report**: <next Monday date>
 🤖 Generated by [Weekly Health Check](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
 <!-- gh-aw-workflow-id: weekly-health-check -->
 ```
 
-**Labels**: `report`, `health-check`, `automated`
+**Labels**: `automated`
 
-After creating the issue, write to workflow summary:
+After creating the issue, write to the workflow summary:
 ```
-Health report created: <issue-url>
+Health report: <issue-url>
 ```
