@@ -17,6 +17,14 @@ permissions:
 
 network: defaults
 
+# Without this block, gh-aw v0.72.1 auto-injects a default create-issue
+# handler. Declaring it explicitly keeps behavior stable across gh-aw upgrades.
+safe-outputs:
+  create-issue:
+    max: 1
+    title-prefix: "[weekly-health-check] "
+    labels: [weekly-health-check, automated]
+
 tools:
   bash: ["git:*", "gh:*", "sed", "grep", "cat", "echo", "date", "go:*", "curl", "jq", "docker:*"]
   github:
@@ -156,16 +164,18 @@ Priority** — Renovate's vuln auto-merge should have caught it.
 
 ## Step 5 — Emit the report
 
-Issues are disabled on this fork — the report has no issue to land in. Instead,
-**emit the full markdown report as your final response.** gh-aw renders the
-agent's final output to the workflow run's step summary, so the report appears
-on the run page and in any subscribed notification.
+**Emit the full markdown report as your final response.** The `safe-outputs`
+handler declared in the frontmatter will turn it into a GitHub issue
+(prefix `[weekly-health-check]`, labels `weekly-health-check, automated`).
+The first `# heading` line becomes the issue title; everything after becomes
+the issue body. The report is ALSO rendered to the workflow run's step
+summary automatically.
 
 Use exactly this structure (substitute the bracketed placeholders with real
 data from steps 1–4):
 
 ```markdown
-# [Health Report] Week of <YYYY-MM-DD>
+# Health Report — Week of <YYYY-MM-DD>
 
 ## Weekly Health Report — Logging Operator (SUSE Rebuild)
 
@@ -255,4 +265,5 @@ Generate strictly from the data above. If a section has nothing, write
 ```
 
 That markdown block IS your final response — emit it verbatim with placeholders
-filled in. No further actions, no issue creation, no comments.
+filled in. Do not run any further tool calls after emitting it; the safe-output
+handler takes it from there.
