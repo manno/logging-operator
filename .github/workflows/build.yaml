@@ -51,6 +51,9 @@ jobs:
         run: |
           goreleaser build --snapshot --clean
 
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG_BASE="${{ env.REGISTRY }}/${{ github.repository }}:dev-${SHORT_SHA}"
+
           # Build Docker images for both architectures
           for arch in amd64 arm64; do
             if [ "$arch" = "amd64" ]; then
@@ -64,12 +67,22 @@ jobs:
               docker buildx build \
                 --platform linux/$arch \
                 -f Dockerfile.suse \
-                -t ${{ env.REGISTRY }}/${{ github.repository }}:dev-$(git rev-parse --short HEAD)-$arch \
+                -t "${TAG_BASE}-${arch}" \
                 ${{ github.event_name != 'pull_request' && '--push' || '--load' }} \
                 .
               rm -f logging-operator
             fi
           done
+
+          # Compose a multi-arch manifest list at the unsuffixed dev tag so
+          # the chart can reference a single tag. Skipped for PRs because the
+          # per-arch images are only --load'ed locally and not pushed.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            docker buildx imagetools create \
+              --tag "${TAG_BASE}" \
+              "${TAG_BASE}-amd64" \
+              "${TAG_BASE}-arm64"
+          fi
 
       - name: Build release with goreleaser
         if: startsWith(github.ref, 'refs/tags/')
