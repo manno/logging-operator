@@ -59,7 +59,7 @@ jobs:
             if [ "$arch" = "amd64" ]; then
               binary_path="dist/logging-operator_linux_amd64_v1/logging-operator"
             else
-              binary_path="dist/logging-operator_linux_arm64/logging-operator"
+              binary_path="dist/logging-operator_linux_arm64_v8.0/logging-operator"
             fi
 
             if [ -f "$binary_path" ]; then
