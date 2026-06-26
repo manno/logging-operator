@@ -91,3 +91,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           goreleaser release --clean
+
+      - name: Dispatch image update to ob-team-charts
+        if: github.ref == 'refs/heads/rancher-main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
+        run: |
+          TAG="dev-$(git rev-parse --short HEAD)"
+          gh api repos/manno/ob-team-charts/dispatches \
+            -f event_type=image-updated \
+            -f "client_payload[component]=logging-operator" \
+            -f "client_payload[tag]=${TAG}"
