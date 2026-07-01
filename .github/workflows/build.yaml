@@ -4,7 +4,7 @@ on:
   push:
     branches: [rancher-main]
     tags: ['v*']
-  pull_request:
+  pull_request_target:
   workflow_dispatch:
 
 env:
@@ -21,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-go@v6
@@ -32,7 +33,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request_target'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -45,7 +46,7 @@ jobs:
           install-only: true
 
       - name: Build with goreleaser (snapshot)
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/rancher-main'
+        if: github.event_name == 'pull_request_target' || github.ref == 'refs/heads/rancher-main'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
@@ -68,7 +69,7 @@ jobs:
                 --platform linux/$arch \
                 -f Dockerfile.suse \
                 -t "${TAG_BASE}-${arch}" \
-                ${{ github.event_name != 'pull_request' && '--push' || '--load' }} \
+                ${{ github.event_name != 'pull_request_target' && '--push' || '--load' }} \
                 .
               rm -f logging-operator
             fi
@@ -77,7 +78,7 @@ jobs:
           # Compose a multi-arch manifest list at the unsuffixed dev tag so
           # the chart can reference a single tag. Skipped for PRs because the
           # per-arch images are only --load'ed locally and not pushed.
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ "${{ github.event_name }}" != "pull_request_target" ]; then
             docker buildx imagetools create \
               --tag "${TAG_BASE}" \
               "${TAG_BASE}-amd64" \
@@ -93,7 +94,7 @@ jobs:
           goreleaser release --clean
 
       - name: Dispatch image update to ob-team-charts
-        if: github.ref == 'refs/heads/rancher-main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/rancher-main' && github.event_name != 'pull_request_target'
         env:
           GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
         run: |
