@@ -14,7 +14,7 @@ description: |
 
 on:
   workflow_run:
-    workflows: ["Weekly Health Check"]
+    workflows: ["Weekly Health Check — Logging Operator (SUSE Rebuild)"]
     types: [completed]
     branches: [rancher-main]
   workflow_dispatch:
