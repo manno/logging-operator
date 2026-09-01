@@ -2,7 +2,7 @@ module github.com/kube-logging/logging-operator
 
 go 1.23
 
-toolchain go1.23.1
+toolchain go1.27.0
 
 require (
 	emperror.dev/errors v0.8.1
