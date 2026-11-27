@@ -1,6 +1,6 @@
 # Goreleaser-compatible SUSE-based image
 # Binary is built externally and copied in
-FROM registry.suse.com/bci/bci-micro:latest
+FROM registry.suse.com/bci/bci-micro@sha256:fefab9e733eb35ae19294ed3db2a408794f297d765c472199a1cac0ec00f39af
 
 LABEL org.opencontainers.image.source="https://github.com/manno/logging-operator"
 LABEL org.opencontainers.image.vendor="SUSE Rancher"
